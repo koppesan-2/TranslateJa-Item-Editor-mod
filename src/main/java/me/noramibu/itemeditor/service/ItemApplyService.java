@@ -2,7 +2,6 @@ package me.noramibu.itemeditor.service;
 
 import me.noramibu.itemeditor.util.ItemEditorText;
 import net.minecraft.client.Minecraft;
-import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
 
 public final class ItemApplyService {
@@ -13,27 +12,17 @@ public final class ItemApplyService {
         }
 
         int selectedSlot = minecraft.player.getInventory().getSelectedSlot();
+        ItemStack previous = minecraft.player.getInventory().getItem(selectedSlot).copy();
         ItemStack copy = stack.copy();
 
-        var singleplayerServer = minecraft.getSingleplayerServer();
-        if (singleplayerServer != null) {
-            minecraft.player.getInventory().setItem(selectedSlot, copy.copy());
-            singleplayerServer.execute(() -> {
-                ServerPlayer serverPlayer = singleplayerServer.getPlayerList().getPlayer(minecraft.player.getUUID());
-                if (serverPlayer == null) return;
-
-                serverPlayer.getInventory().setItem(selectedSlot, copy.copy());
-                serverPlayer.inventoryMenu.broadcastChanges();
-                serverPlayer.containerMenu.broadcastChanges();
-            });
+        minecraft.player.getInventory().setItem(selectedSlot, copy.copy());
+        if (ClientInventorySyncService.syncSlot(minecraft, selectedSlot, copy)) {
+            if (minecraft.getSingleplayerServer() == null) {
+                return ApplyResult.success(ItemEditorText.str("apply.creative_success"));
+            }
             return ApplyResult.success(ItemEditorText.str("apply.singleplayer_success"));
         }
-
-        if (minecraft.player.hasInfiniteMaterials() && minecraft.gameMode != null) {
-            minecraft.player.getInventory().setItem(selectedSlot, copy.copy());
-            minecraft.gameMode.handleCreativeModeItemAdd(copy, 36 + selectedSlot);
-            return ApplyResult.success(ItemEditorText.str("apply.creative_success"));
-        }
+        minecraft.player.getInventory().setItem(selectedSlot, previous);
 
         return ApplyResult.failure(ItemEditorText.str("apply.multiplayer_preview_only"));
     }
