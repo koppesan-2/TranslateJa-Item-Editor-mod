@@ -533,7 +533,7 @@ final class AdvancedItemSpecialDataApplier extends AbstractPreviewApplierSupport
                 return;
             }
 
-            net.minecraft.nbt.CompoundTag entityTag = new net.minecraft.nbt.CompoundTag();
+            CompoundTag entityTag = new CompoundTag();
             occupants.add(new BeehiveBlockEntity.Occupant(TypedEntityData.of(entityType, entityTag), ticks, minTicks));
         }
         context.previewStack().set(DataComponents.BEES, new Bees(occupants));
@@ -1093,31 +1093,24 @@ final class AdvancedItemSpecialDataApplier extends AbstractPreviewApplierSupport
             return;
         }
 
-        Registry<DamageType> damageTypeRegistry = context.registryAccess().lookupOrThrow(Registries.DAMAGE_TYPE);
-        List<Holder<DamageType>> types = new ArrayList<>();
-        boolean hasInvalidEntry = false;
-        for (String id : this.splitIdentifierList(context.special().damageResistantTypeIds)) {
-            Holder<DamageType> holder = RegistryUtil.resolveHolder(damageTypeRegistry, id);
-            if (holder == null) {
-                hasInvalidEntry = true;
-                context.messages().add(ValidationMessage.error(ItemEditorText.str(
-                        "validation.registry_missing",
-                        ItemEditorText.str("special.advanced.component_tweaks.damage_resistant_types"),
-                        id
-                )));
-                continue;
-            }
-            types.add(holder);
-        }
-
-        if (types.isEmpty()) {
-            if (!hasInvalidEntry) {
-                this.clearToPrototype(context.previewStack(), DataComponents.DAMAGE_RESISTANT);
-            }
+        OptionalDamageTypeHolderSetResult parsed = this.parseOptionalDamageTypeHolderSet(
+                context.registryAccess().lookupOrThrow(Registries.DAMAGE_TYPE),
+                context.special().damageResistantTypeIds,
+                ItemEditorText.str("special.advanced.component_tweaks.damage_resistant_types"),
+                context.special().allowDamageResistantTagExpansion,
+                context.messages()
+        );
+        if (!parsed.valid()) {
             return;
         }
 
-        context.previewStack().set(DataComponents.DAMAGE_RESISTANT, new DamageResistant(HolderSet.direct(types)));
+        Optional<HolderSet<DamageType>> types = parsed.value();
+        if (types.isEmpty()) {
+            this.clearToPrototype(context.previewStack(), DataComponents.DAMAGE_RESISTANT);
+            return;
+        }
+
+        context.previewStack().set(DataComponents.DAMAGE_RESISTANT, new DamageResistant(types.get()));
     }
 
     private void applyNoteBlockSound(SpecialDataApplyContext context) {
@@ -1390,6 +1383,7 @@ final class AdvancedItemSpecialDataApplier extends AbstractPreviewApplierSupport
                     context.registryAccess().lookupOrThrow(Registries.DAMAGE_TYPE),
                     context.special().blocksAttacksBypassedByTypeIds,
                     ItemEditorText.str("special.advanced.component_tweaks.blocks_attacks_bypassed_by"),
+                    context.special().allowBlocksAttacksBypassedByTagExpansion,
                     context.messages()
             );
             if (!parsedBypassedBy.valid()) {
@@ -1757,6 +1751,7 @@ final class AdvancedItemSpecialDataApplier extends AbstractPreviewApplierSupport
             Registry<DamageType> registry,
             String raw,
             String label,
+            boolean allowTagExpansion,
             List<ValidationMessage> messages
     ) {
         if (raw == null || raw.isBlank()) {
@@ -1767,35 +1762,81 @@ final class AdvancedItemSpecialDataApplier extends AbstractPreviewApplierSupport
         if (values.isEmpty()) {
             return OptionalDamageTypeHolderSetResult.valid(null);
         }
-        if (values.size() == 1 && values.getFirst().startsWith("#")) {
-            Identifier tagId = IdFieldNormalizer.parse(values.getFirst().substring(1));
-            if (tagId == null) {
-                this.reportMissingRegistry(label, values.getFirst(), messages);
-                return OptionalDamageTypeHolderSetResult.invalid();
+        if (!allowTagExpansion && values.size() > 1) {
+            for (String value : values) {
+                if (this.isDamageTypeTagReference(registry, value)) {
+                    messages.add(ValidationMessage.error(ItemEditorText.str(
+                            "special.advanced.component_tweaks.tag_expansion_required",
+                            label
+                    )));
+                    return OptionalDamageTypeHolderSetResult.invalid();
+                }
             }
-            TagKey<DamageType> tagKey = TagKey.create(Registries.DAMAGE_TYPE, tagId);
-            Optional<HolderSet.Named<DamageType>> tag = registry.get(tagKey);
-            if (tag.isEmpty()) {
-                this.reportMissingRegistry(label, values.getFirst(), messages);
-                return OptionalDamageTypeHolderSetResult.invalid();
-            }
-            return OptionalDamageTypeHolderSetResult.valid(tag.get());
         }
-
         List<Holder<DamageType>> holders = new ArrayList<>();
         for (String value : values) {
             if (value.startsWith("#")) {
-                messages.add(ValidationMessage.error(ItemEditorText.str("preview.validation.component_failed", label)));
-                return OptionalDamageTypeHolderSetResult.invalid();
+                Optional<HolderSet.Named<DamageType>> tag = this.resolveDamageTypeTag(registry, value.substring(1), label, messages);
+                if (tag.isEmpty()) {
+                    return OptionalDamageTypeHolderSetResult.invalid();
+                }
+                if (values.size() == 1) {
+                    return OptionalDamageTypeHolderSetResult.valid(tag.get());
+                }
+                tag.get().stream().forEach(holders::add);
+                continue;
             }
+
             Holder<DamageType> holder = RegistryUtil.resolveHolder(registry, value);
             if (holder == null) {
-                this.reportMissingRegistry(label, value, messages);
-                return OptionalDamageTypeHolderSetResult.invalid();
+                Optional<HolderSet.Named<DamageType>> tag = this.resolveDamageTypeTag(registry, value, label, messages);
+                if (tag.isEmpty()) {
+                    return OptionalDamageTypeHolderSetResult.invalid();
+                }
+                if (values.size() == 1) {
+                    return OptionalDamageTypeHolderSetResult.valid(tag.get());
+                }
+                tag.get().stream().forEach(holders::add);
+                continue;
             }
             holders.add(holder);
         }
         return OptionalDamageTypeHolderSetResult.valid(HolderSet.direct(holders));
+    }
+
+    private Optional<HolderSet.Named<DamageType>> resolveDamageTypeTag(
+            Registry<DamageType> registry,
+            String rawId,
+            String label,
+            List<ValidationMessage> messages
+    ) {
+        Identifier tagId = IdFieldNormalizer.parse(rawId);
+        if (tagId == null) {
+            this.reportMissingRegistry(label, rawId, messages);
+            return Optional.empty();
+        }
+
+        Optional<HolderSet.Named<DamageType>> tag = registry.get(
+                TagKey.create(Registries.DAMAGE_TYPE, tagId)
+        );
+        if (tag.isEmpty()) {
+            this.reportMissingRegistry(label, rawId, messages);
+        }
+        return tag;
+    }
+
+    private boolean isDamageTypeTagReference(Registry<DamageType> registry, String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        if (value.startsWith("#")) {
+            return true;
+        }
+        if (RegistryUtil.resolveHolder(registry, value) != null) {
+            return false;
+        }
+        Identifier tagId = IdFieldNormalizer.parse(value);
+        return tagId != null && registry.get(TagKey.create(Registries.DAMAGE_TYPE, tagId)).isPresent();
     }
 
     private List<BlocksAttacks.DamageReduction> parseBlocksAttacksDamageReductions(
@@ -1827,6 +1868,7 @@ final class AdvancedItemSpecialDataApplier extends AbstractPreviewApplierSupport
                     damageTypeRegistry,
                     draft.typeIds,
                     ItemEditorText.str("special.advanced.component_tweaks.blocks_attacks_reduction_types"),
+                    draft.allowTagExpansion,
                     context.messages()
             );
             if (angle == null || base == null || factor == null || !type.valid()) {
