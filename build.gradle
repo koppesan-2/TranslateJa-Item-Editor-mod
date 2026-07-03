@@ -36,9 +36,11 @@ dependencies {
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 	implementation "io.wispforest:owo-lib:${project.owo_version}"
 	annotationProcessor "io.wispforest:owo-lib:${project.owo_version}"
+}
 
-	testImplementation "org.junit.jupiter:junit-jupiter:5.11.4"
-	testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.11.4"
+def localTests = file("local-tests.gradle")
+if (localTests.exists()) {
+	apply from: localTests
 }
 
 processResources {
@@ -51,10 +53,6 @@ processResources {
 
 tasks.withType(JavaCompile).configureEach {
 	it.options.release = 25
-}
-
-tasks.withType(Test).configureEach {
-	useJUnitPlatform()
 }
 
 java {

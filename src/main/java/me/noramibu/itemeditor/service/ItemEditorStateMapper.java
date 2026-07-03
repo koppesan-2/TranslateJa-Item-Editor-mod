@@ -1,7 +1,10 @@
 package me.noramibu.itemeditor.service;
 
+import static me.noramibu.itemeditor.util.ValidationUtil.trimTrailingZeros;
+
 import com.mojang.serialization.DataResult;
 import me.noramibu.itemeditor.editor.ItemEditorState;
+import me.noramibu.itemeditor.util.InstrumentDetails;
 import me.noramibu.itemeditor.util.TextComponentUtil;
 import me.noramibu.itemeditor.util.ItemEditorCapabilities;
 import me.noramibu.itemeditor.util.ValidationUtil;
@@ -11,6 +14,7 @@ import net.minecraft.advancements.criterion.MinMaxBounds;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderSet;
 import net.minecraft.core.RegistryAccess;
+import net.minecraft.core.component.DataComponentType;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
@@ -50,6 +54,7 @@ import net.minecraft.world.item.component.CustomModelData;
 import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.component.DamageResistant;
 import net.minecraft.world.item.component.DeathProtection;
+import net.minecraft.world.item.component.DebugStickState;
 import net.minecraft.world.item.component.DyedItemColor;
 import net.minecraft.world.item.component.FireworkExplosion;
 import net.minecraft.world.item.component.Fireworks;
@@ -86,12 +91,14 @@ import net.minecraft.world.item.enchantment.Enchantable;
 import net.minecraft.world.item.enchantment.Repairable;
 import net.minecraft.world.item.equipment.Equippable;
 import net.minecraft.world.item.equipment.trim.ArmorTrim;
+import net.minecraft.world.item.equipment.trim.TrimMaterial;
 import net.minecraft.world.item.enchantment.ItemEnchantments;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.animal.axolotl.Axolotl;
 import net.minecraft.world.entity.animal.fish.Salmon;
 import net.minecraft.world.entity.animal.fish.TropicalFish;
 import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.level.block.entity.BannerPattern;
 import net.minecraft.world.level.block.entity.BannerPatternLayers;
 import net.minecraft.world.level.block.entity.BeehiveBlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
@@ -110,6 +117,7 @@ import java.util.regex.Pattern;
 public final class ItemEditorStateMapper {
 
     private static final Pattern IDENTIFIER_PATTERN = Pattern.compile("([a-z0-9_.-]+:[a-z0-9_./-]+)");
+    private static final Identifier DYE_COMPONENT_ID = Identifier.tryParse("minecraft:dye");
 
     public ItemEditorState map(ItemStack stack, RegistryAccess registryAccess) {
         ItemEditorState state = new ItemEditorState();
@@ -133,8 +141,7 @@ public final class ItemEditorStateMapper {
 
         Boolean glintOverride = stack.get(DataComponents.ENCHANTMENT_GLINT_OVERRIDE);
         if (glintOverride != null) {
-            state.glintOverrideEnabled = true;
-            state.glintOverride = glintOverride;
+            state.glintOverride = Boolean.toString(glintOverride);
         }
 
         state.rarity = stack.getRarity().name();
@@ -146,17 +153,10 @@ public final class ItemEditorStateMapper {
 
         CustomModelData customModelData = stack.get(DataComponents.CUSTOM_MODEL_DATA);
         if (customModelData != null) {
-            Float firstFloat = customModelData.getFloat(0);
-            if (firstFloat != null) state.customModelFloat = firstFloat.toString();
-            Boolean firstFlag = customModelData.getBoolean(0);
-            if (firstFlag != null) {
-                state.customModelFlagEnabled = true;
-                state.customModelFlag = firstFlag;
-            }
-            String firstString = customModelData.getString(0);
-            if (firstString != null) state.customModelString = firstString;
-            Integer firstColor = customModelData.getColor(0);
-            if (firstColor != null) state.customModelColor = ValidationUtil.toHex(firstColor);
+            state.customModelFloat = joinFloats(customModelData.floats());
+            state.customModelFlags = joinValues(customModelData.flags());
+            state.customModelString = String.join(", ", customModelData.strings());
+            state.customModelColor = joinColors(customModelData.colors());
         }
 
         CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
@@ -166,6 +166,23 @@ public final class ItemEditorStateMapper {
                 state.special.customDataSnbt = new SnbtPrinterTagVisitor().visit(tag);
                 state.special.uiCustomDataCollapsed = false;
             }
+        }
+
+        DebugStickState debugStickState = stack.get(DataComponents.DEBUG_STICK_STATE);
+        if (debugStickState != null) {
+            debugStickState.properties().forEach((blockHolder, property) -> {
+                ItemEditorState.DebugStickStateDraft draft = new ItemEditorState.DebugStickStateDraft();
+                draft.blockId = idOrEmpty(blockHolder);
+                draft.propertyName = property.getName();
+                state.special.debugStickStates.add(draft);
+            });
+        }
+
+        DataComponentType<?> dyeComponentType = BuiltInRegistries.DATA_COMPONENT_TYPE
+                .getOptional(DYE_COMPONENT_ID)
+                .orElse(null);
+        if (dyeComponentType != null && stack.get(dyeComponentType) instanceof DyeColor dyeColor) {
+            state.special.dyeColor = dyeColor.name();
         }
 
         FoodProperties foodProperties = stack.get(DataComponents.FOOD);
@@ -180,7 +197,7 @@ public final class ItemEditorStateMapper {
             state.special.consumableConsumeSeconds = trimTrailingZeros(consumable.consumeSeconds());
             state.special.consumableAnimation = consumable.animation().name();
             setIdFromHolder(consumable.sound(), id -> state.special.consumableSoundId = id);
-            state.special.consumableHasParticles = consumable.hasConsumeParticles();
+            state.special.consumableHasParticles = Boolean.toString(consumable.hasConsumeParticles());
             readConsumableEffects(consumable.onConsumeEffects(), state.special.consumableOnConsumeEffects);
         }
 
@@ -196,6 +213,7 @@ public final class ItemEditorStateMapper {
             var template = useRemainder.convertInto();
             setIdFromHolder(template.item(), id -> state.special.useRemainderItemId = id);
             state.special.useRemainderCount = Integer.toString(template.count());
+            state.special.useRemainderTemplateSnbt = this.encodeItemStackTemplate(template, registryAccess);
         }
 
         UseCooldown useCooldown = stack.get(DataComponents.USE_COOLDOWN);
@@ -211,9 +229,9 @@ public final class ItemEditorStateMapper {
             setIdFromHolder(equippable.shearingSound(), id -> state.special.equippableShearingSoundId = id);
             equippable.assetId().ifPresent(assetId -> state.special.equippableAssetId = assetId.identifier().toString());
             equippable.cameraOverlay().ifPresent(cameraOverlay -> state.special.equippableCameraOverlayId = cameraOverlay.toString());
-            state.special.equippableDispensable = equippable.dispensable();
-            state.special.equippableSwappable = equippable.swappable();
-            state.special.equippableDamageOnHurt = equippable.damageOnHurt();
+            state.special.equippableDispensable = Boolean.toString(equippable.dispensable());
+            state.special.equippableSwappable = Boolean.toString(equippable.swappable());
+            state.special.equippableDamageOnHurt = Boolean.toString(equippable.damageOnHurt());
             state.special.equippableEquipOnInteract = equippable.equipOnInteract();
             state.special.equippableCanBeSheared = equippable.canBeSheared();
         }
@@ -229,6 +247,13 @@ public final class ItemEditorStateMapper {
             state.special.toolDefaultMiningSpeed = trimTrailingZeros(tool.defaultMiningSpeed());
             state.special.toolDamagePerBlock = Integer.toString(tool.damagePerBlock());
             state.special.toolCanDestroyBlocksInCreative = tool.canDestroyBlocksInCreative();
+            for (Tool.Rule rule : tool.rules()) {
+                ItemEditorState.ToolRuleDraft draft = new ItemEditorState.ToolRuleDraft();
+                draft.blockIds = joinHolderSetIds(rule.blocks());
+                draft.speed = rule.speed().map(ValidationUtil::trimTrailingZeros).orElse("");
+                draft.correctForDrops = rule.correctForDrops().map(String::valueOf).orElse("");
+                state.special.toolRules.add(draft);
+            }
         }
 
         Repairable repairable = stack.get(DataComponents.REPAIRABLE);
@@ -254,7 +279,14 @@ public final class ItemEditorStateMapper {
         if (chargedProjectiles != null) {
             chargedProjectiles.itemCopies().stream()
                     .filter(projectile -> !projectile.isEmpty())
-                    .map(ItemEditorState.ChargedProjectileDraft::fromStack)
+                    .map(projectile -> {
+                        ItemEditorState.ChargedProjectileDraft draft = ItemEditorState.ChargedProjectileDraft.fromStack(projectile);
+                        draft.templateSnbt = this.encodeItemStackTemplate(
+                                ItemStackTemplate.fromNonEmptyStack(projectile),
+                                registryAccess
+                        );
+                        return draft;
+                    })
                     .forEach(state.special.chargedProjectiles::add);
         }
 
@@ -311,6 +343,16 @@ public final class ItemEditorStateMapper {
             state.special.noteBlockSoundId = noteBlockSound.toString();
         }
 
+        Holder<TrimMaterial> providesTrimMaterial = stack.get(DataComponents.PROVIDES_TRIM_MATERIAL);
+        if (providesTrimMaterial != null) {
+            setIdFromHolder(providesTrimMaterial, id -> state.special.providesTrimMaterialId = id);
+        }
+
+        HolderSet<BannerPattern> providesBannerPatterns = stack.get(DataComponents.PROVIDES_BANNER_PATTERNS);
+        if (providesBannerPatterns != null) {
+            state.special.providesBannerPatternsTagId = joinHolderSetIds(providesBannerPatterns);
+        }
+
         Holder<SoundEvent> breakSound = stack.get(DataComponents.BREAK_SOUND);
         if (breakSound != null) {
             setIdFromHolder(breakSound, id -> state.special.breakSoundId = id);
@@ -356,7 +398,7 @@ public final class ItemEditorStateMapper {
 
         PiercingWeapon piercingWeapon = stack.get(DataComponents.PIERCING_WEAPON);
         if (piercingWeapon != null) {
-            state.special.piercingDealsKnockback = piercingWeapon.dealsKnockback();
+            state.special.piercingDealsKnockback = Boolean.toString(piercingWeapon.dealsKnockback());
             state.special.piercingDismounts = piercingWeapon.dismounts();
             setIdFromHolder(piercingWeapon.sound().orElse(null), id -> state.special.piercingSoundId = id);
             setIdFromHolder(piercingWeapon.hitSound().orElse(null), id -> state.special.piercingHitSoundId = id);
@@ -554,10 +596,14 @@ public final class ItemEditorStateMapper {
                 draft.duration = Integer.toString(effect.getDuration());
                 draft.amplifier = Integer.toString(effect.getAmplifier());
                 draft.ambient = effect.isAmbient();
-                draft.visible = effect.isVisible();
-                draft.showIcon = effect.showIcon();
+                draft.visible = Boolean.toString(effect.isVisible());
+                draft.showIcon = Boolean.toString(effect.showIcon());
                 state.special.potionEffects.add(draft);
             });
+        }
+        Float potionDurationScale = stack.get(DataComponents.POTION_DURATION_SCALE);
+        if (potionDurationScale != null) {
+            state.special.potionDurationScale = ValidationUtil.trimTrailingZeros(potionDurationScale);
         }
 
         SuspiciousStewEffects stewEffects = stack.get(DataComponents.SUSPICIOUS_STEW_EFFECTS);
@@ -679,6 +725,7 @@ public final class ItemEditorStateMapper {
         InstrumentComponent instrument = stack.get(DataComponents.INSTRUMENT);
         if (instrument != null) {
             setIdFromHolder(instrument.instrument(), id -> state.special.instrumentId = id);
+            InstrumentDetails.fromInstrument(instrument.instrument().value()).applyTo(state.special);
         }
 
         JukeboxPlayable jukeboxPlayable = stack.get(DataComponents.JUKEBOX_PLAYABLE);
@@ -846,6 +893,18 @@ public final class ItemEditorStateMapper {
         }
     }
 
+    private String encodeItemStackTemplate(ItemStackTemplate template, RegistryAccess registryAccess) {
+        try {
+            var ops = registryAccess.createSerializationContext(NbtOps.INSTANCE);
+            return ItemStackTemplate.CODEC.encodeStart(ops, template)
+                    .result()
+                    .map(Tag::toString)
+                    .orElse("");
+        } catch (RuntimeException ignored) {
+            return "";
+        }
+    }
+
     private static int parseSlotOrMinusOne(String rawSlot) {
         try {
             return Integer.parseInt(rawSlot.trim());
@@ -933,7 +992,7 @@ public final class ItemEditorStateMapper {
         special.commandBlockTrackOutput = blockTag.getBooleanOr("TrackOutput", true);
         special.commandBlockUpdateLastExecution = blockTag.getBooleanOr("UpdateLastExecution", true);
         special.commandBlockSuccessCount = readOptionalInt(blockTag, "SuccessCount");
-        special.commandBlockLastExecution = readLastExecution(blockTag);
+        special.commandBlockLastExecution = blockTag.getLong("LastExecution").map(String::valueOf).orElse("");
         blockTag.read("CustomName", ComponentSerialization.CODEC)
                 .ifPresent(component -> special.commandBlockCustomName = TextComponentUtil.toMarkup(component));
         blockTag.read("LastOutput", ComponentSerialization.CODEC)
@@ -1155,8 +1214,8 @@ public final class ItemEditorStateMapper {
                     effectDraft.duration = Integer.toString(effectInstance.getDuration());
                     effectDraft.amplifier = Integer.toString(effectInstance.getAmplifier());
                     effectDraft.ambient = effectInstance.isAmbient();
-                    effectDraft.visible = effectInstance.isVisible();
-                    effectDraft.showIcon = effectInstance.showIcon();
+                    effectDraft.visible = Boolean.toString(effectInstance.isVisible());
+                    effectDraft.showIcon = Boolean.toString(effectInstance.showIcon());
                     draft.effects.add(effectDraft);
                 }
                 target.add(draft);
@@ -1196,8 +1255,31 @@ public final class ItemEditorStateMapper {
         return tag.getInt(key).map(String::valueOf).orElse("");
     }
 
-    private static String readLastExecution(CompoundTag tag) {
-        return tag.getLong("LastExecution").map(String::valueOf).orElse("");
+    private static String joinFloats(List<Float> values) {
+        return String.join(
+                ", ",
+                values.stream()
+                        .map(ValidationUtil::trimTrailingZeros)
+                        .toList()
+        );
+    }
+
+    private static String joinColors(List<Integer> values) {
+        return String.join(
+                ", ",
+                values.stream()
+                        .map(ValidationUtil::toHex)
+                        .toList()
+        );
+    }
+
+    private static String joinValues(List<?> values) {
+        return String.join(
+                ", ",
+                values.stream()
+                        .map(String::valueOf)
+                        .toList()
+        );
     }
 
     private static void setIdFromHolder(Holder<?> holder, Consumer<String> setter) {
@@ -1249,9 +1331,5 @@ public final class ItemEditorStateMapper {
                                 .map(key -> key.identifier().toString())
                                 .toList()
                 ));
-    }
-
-    private static String trimTrailingZeros(double value) {
-        return ValidationUtil.trimTrailingZeros(value);
     }
 }
