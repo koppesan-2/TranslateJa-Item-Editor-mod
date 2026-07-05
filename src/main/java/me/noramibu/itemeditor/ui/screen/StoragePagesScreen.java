@@ -61,16 +61,16 @@ public final class StoragePagesScreen extends BaseOwoScreen<StackLayout> {
     private static final int SCROLLBAR_THICKNESS = 8;
     private static final int RENAME_EDITOR_HEIGHT = 34;
     private static final Surface PAGE_ROW_SURFACE = Surface.flat(0xAA1B222B).and(Surface.outline(0xFF414B56));
-    private static final int ACTION_OPEN_WIDTH = 52;
-    private static final int ACTION_RENAME_WIDTH = 66;
-    private static final int ACTION_DUPLICATE_WIDTH = 72;
-    private static final int ACTION_NEW_EMPTY_WIDTH = 138;
-    private static final int ACTION_REMOVE_EMPTY_WIDTH = 156;
-    private static final int ACTION_IMPORT_OTHER_WIDTH = 166;
-    private static final int ACTION_EXPORT_ALL_JSON_WIDTH = 138;
-    private static final int ACTION_BACKUP_WIDTH = 58;
-    private static final int ACTION_EXPORT_WIDTH = 62;
-    private static final int ACTION_DELETE_WIDTH = 58;
+    private static final int ACTION_OPEN_WIDTH = 70;
+    private static final int ACTION_RENAME_WIDTH = 65;
+    private static final int ACTION_DUPLICATE_WIDTH = 65;
+    private static final int ACTION_NEW_EMPTY_WIDTH =200;
+    private static final int ACTION_REMOVE_EMPTY_WIDTH = 200;
+    private static final int ACTION_IMPORT_OTHER_WIDTH = 200;
+    private static final int ACTION_EXPORT_ALL_JSON_WIDTH = 200;
+    private static final int ACTION_BACKUP_WIDTH = 70;
+    private static final int ACTION_EXPORT_WIDTH = 70;
+    private static final int ACTION_DELETE_WIDTH = 60;
     private static final int ACTION_MOVE_WIDTH = 24;
     private static final String DEFAULT_DISPLAY_PAGE_NAME = "Chest";
     private static final String EXPORT_ALL_JSON_DIRECTORY = "itemeditor/exports/storage-pages-json";
@@ -182,12 +182,13 @@ public final class StoragePagesScreen extends BaseOwoScreen<StackLayout> {
                 ACTION_REMOVE_EMPTY_WIDTH,
                 this::removeEmptyPages
         ));
-        pageTools.child(this.headerButton(
+        FlowLayout pageTools2 = compactActionRow();
+        pageTools2.child(this.headerButton(
                 ItemEditorText.tr("storage.import_other_mods").copy().withColor(UiColors.SUCCESS),
                 ACTION_IMPORT_OTHER_WIDTH,
                 this::openOtherModsImport
         ));
-        pageTools.child(this.headerButton(
+        pageTools2.child(this.headerButton(
                 ItemEditorText.tr("storage.pages.export_all_json").copy().withColor(UiColors.SUCCESS),
                 ACTION_EXPORT_ALL_JSON_WIDTH,
                 this::exportAllItemsJson
