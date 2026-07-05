@@ -197,10 +197,12 @@ public final class StoragePagesScreen extends BaseOwoScreen<StackLayout> {
             FlowLayout toolsLine = compactActionRow();
             toolsLine.child(displayEmpty);
             toolsLine.child(pageTools);
+            toolsLine.child(pageTools2);
             shell.child(toolsLine);
         } else {
             shell.child(displayEmpty);
             shell.child(pageTools);
+            shell.child(pageTools2);
         }
 
         this.summaryLabel = UiFactory.muted(Component.literal(" "), this.contentTextWidth(), dense ? 0.82F : 1.0F);
